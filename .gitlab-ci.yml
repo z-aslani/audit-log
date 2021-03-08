@@ -1,0 +1,49 @@
+stages:
+  - publish-image
+  - deploy
+
+
+variables:
+  IMAGE_TAG: $CI_PIPELINE_ID-$CI_COMMIT_BRANCH-$CI_COMMIT_SHORT_SHA
+  PEGAH_REGISTRY_IMAGE_URL: $PEGAH_REGISTRY_URL/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_PIPELINE_ID-$CI_COMMIT_BRANCH-$CI_COMMIT_SHORT_SHA
+  MEDIAAD_REGISTRY_IMAGE_URL: $HETZNER_REGISTRY_URL/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_PIPELINE_ID-$CI_COMMIT_BRANCH-$CI_COMMIT_SHORT_SHA
+
+
+publish-image-to-pegah-registry:
+  stage: publish-image
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: on_success
+    - when: never
+  variables:
+    GIT_STRATEGY: fetch
+  before_script:
+    - mkdir -p /kaniko/.docker/
+    - echo "{\"auths\":{\"$PEGAH_REGISTRY_URL\":{\"username\":\"$PEGAH_REGISTRY_USERNAME\",\"password\":\"$PEGAH_REGISTRY_PASSWORD\"},\"$HETZNER_REGISTRY_URL\":{\"username\":\"$HETZNER_REGISTRY_USERNAME\",\"password\":\"$HETZNER_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - export HTTP_PROXY="$PROXY_HOST_PORT"
+    - export HTTPS_PROXY="$PROXY_HOST_PORT"
+    - export NO_PROXY="localhost,172.16.0.0/16"
+    - echo pushing image $PEGAH_REGISTRY_IMAGE_URL to Pegah Registry
+  script:
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination $PEGAH_REGISTRY_IMAGE_URL
+
+
+deploy-production:
+  stage: deploy
+  image: kroniak/ssh-client:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: on_success
+    - when: never
+  variables:
+    GIT_STRATEGY: none
+  dependencies: []
+  before_script:
+    - chmod 700 /runner/.ssh/id_rsa
+    - eval "$(ssh-agent -s)"
+    - ssh-add /runner/.ssh/id_rsa
+  script:
+    - ssh -o "StrictHostKeyChecking=no" root@$PRODUCTION_SSH_SERVER /home/gitlab-cicd/update-deploy.sh -n infra -d $CI_PROJECT_NAME -c $CI_PROJECT_NAME -i $CI_PROJECT_NAME -t $IMAGE_TAG -b $CI_COMMIT_BRANCH -r $CI_PROJECT_NAMESPACE -p $CI_PROJECT_PATH -m "$CI_COMMIT_MESSAGE"

@@ -1,0 +1,48 @@
+- name: Config rsyslog
+  hosts: all
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    logstash_domain: '172.16.10.1:30917'
+  tasks:
+    - name: Add a file to a rsyslog conf directory that sends all logs to logstash
+      copy:
+        dest: "/etc/rsyslog.d/70-output.conf"
+        content: '*.*                             @{{ logstash_domain }}'
+      notify:
+        - Restart rsyslog
+
+  handlers:
+    - name: Restart rsyslog
+      systemd: name=rsyslog state=restarted enabled=yes daemon_reload=yes
+
+- name: Config command log
+  hosts: all
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: insert function to profile and bashrc
+      blockinfile:
+        path: "{{ item }}"
+        block: |
+          function log2syslog
+          {
+            declare COMMAND
+            COMMAND=$(history 1 | sed -e "s/^[ ]*[0-9]*[ ]*//")
+            logger -p local1.notice -t command -i -- "${SOLTAN}:${COMMAND}"
+          }
+          export PROMPT_COMMAND=log2syslog
+        create: yes
+      loop:
+        - /etc/profile
+        - /etc/bash.bashrc
+
+    - name: insert function to zshenv
+      blockinfile:
+        path: /etc/zsh/zshenv
+        block: |
+          precmd() {
+            declare COMMAND
+            COMMAND=$(fc -ln -1)
+            logger -p local1.notice -t command -i -- "${SOLTAN}:${COMMAND}"
+          }
+        create: yes
